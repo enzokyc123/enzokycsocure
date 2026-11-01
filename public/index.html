@@ -80,15 +80,23 @@ $("form").addEventListener("submit", async (e) => {
     if (!r.ok) throw new Error(data.error || "Something went wrong.");
     if (data.decision) return finish(data.decision);
     const cfg = await (await fetch("/api/config")).json();
-    show("capture");
+        show("capture");
     window.SocureDocVSDK.launch(cfg.sdkKey, data.docvTransactionToken, "#websdk", {
       qrCodeNeeded: true,
       closeCaptureWindowOnComplete: true,
+      onProgress: (info) => console.log("DocV progress:", info),
       onSuccess: () => { show("wait"); poll(data.evalId); },
+      onError: (error) => {
+        console.error("DocV error:", error);
+        show("form");
+        $("go").disabled = false;
+        $("err").textContent = "Verification could not be completed. Please try again.";
+      },
     });
-    // Fallback: start polling anyway in case the SDK callback doesn't fire.
+    // Fallback: start polling in case the success callback doesn't fire.
     poll(data.evalId);
-  } catch (err) {
+  } catch (err) { 
+    show("form");
     $("err").textContent = err.message;
     $("go").disabled = false;
   }
