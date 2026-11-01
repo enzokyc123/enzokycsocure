@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify your identity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f5f7f6;--ink:#14231f;--muted:#5b6b66;--line:#d3dcd8;--card:#fff;--accent:#0f6b57;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#101716;--ink:#e8f0ed;--muted:#9fb0aa;--line:#2a3835;--card:#18211f;--accent:#4fc3a6;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Public Sans",system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
+main{max-width:520px;margin:0 auto;padding:48px 20px}
+h1{font-size:28px;margin:0 0 8px;letter-spacing:-.01em}
+p.lead{color:var(--muted);margin:0 0 28px}
+form,.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:24px}
+label{display:block;font-size:14px;font-weight:600;margin:14px 0 4px}
+input{width:100%;padding:10px 12px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px}
+input:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button{margin-top:24px;width:100%;padding:12px;font:inherit;font-weight:700;color:#fff;background:var(--accent);border:0;border-radius:6px;cursor:pointer}
+@media (prefers-color-scheme:dark){button{color:#08130f}}
+button:disabled{opacity:.6;cursor:wait}
+.err{color:var(--bad);margin-top:12px;font-size:14px}
+.hidden{display:none}
+.result h2{margin:0 0 8px}
+.ok h2{color:var(--accent)} .no h2{color:var(--bad)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Verify your identity</h1>
+  <p class="lead">Enter your details, then photograph your ID and take a selfie. It takes about two minutes.</p>
+
+  <form id="form">
+    <div class="row">
+      <div><label for="givenName">First name</label><input id="givenName" required></div>
+      <div><label for="familyName">Last name</label><input id="familyName" required></div>
+    </div>
+    <label for="phoneNumber">Phone number (with country code)</label>
+    <input id="phoneNumber" type="tel" placeholder="+19998887777" required>
+    <label for="email">Email</label><input id="email" type="email">
+    <label for="dateOfBirth">Date of birth</label><input id="dateOfBirth" type="date">
+    <label for="addressLine1">Street address</label><input id="addressLine1">
+    <div class="row">
+      <div><label for="locality">City</label><input id="locality"></div>
+      <div><label for="majorAdminDivision">State</label><input id="majorAdminDivision"></div>
+    </div>
+    <div class="row">
+      <div><label for="postalCode">ZIP code</label><input id="postalCode"></div>
+      <div><label for="country">Country code</label><input id="country" value="US" maxlength="2" required></div>
+    </div>
+    <button id="go" type="submit">Start verification</button>
+    <div id="err" class="err" role="alert"></div>
+  </form>
+
+  <div id="capture" class="hidden"><div id="websdk"></div></div>
+
+  <div id="wait" class="panel hidden" aria-live="polite">
+    <h2>Checking your documents</h2><p>This usually takes under a minute. Keep this page open.</p>
+  </div>
+  <div id="accept" class="panel result ok hidden"><h2>You're verified</h2><p>Your identity was confirmed. You can continue.</p></div>
+  <div id="reject" class="panel result no hidden"><h2>We couldn't verify you</h2><p>The documents didn't pass our checks. Please contact support or try again with a clear photo of a valid ID.</p></div>
+</main>
+
+<script src="https://websdk.socure.com/bundle.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const show = (id) => { ["form","capture","wait","accept","reject"].forEach(x => $(x).classList.add("hidden")); $(id).classList.remove("hidden"); };
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("err").textContent = ""; $("go").disabled = true;
+  const body = {};
+  ["givenName","familyName","phoneNumber","email","dateOfBirth","addressLine1","locality","majorAdminDivision","postalCode","country"].forEach(k => body[k] = $(k).value.trim());
+  try {
+    const r = await fetch("/api/start", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Something went wrong.");
+    if (data.decision) return finish(data.decision);
+    const cfg = await (await fetch("/api/config")).json();
+    show("capture");
+    window.SocureDocVSDK.launch(cfg.sdkKey, data.docvTransactionToken, "#websdk", {
+      qrCodeNeeded: true,
+      closeCaptureWindowOnComplete: true,
+      onSuccess: () => { show("wait"); poll(data.evalId); },
+    });
+    // Fallback: start polling anyway in case the SDK callback doesn't fire.
+    poll(data.evalId);
+  } catch (err) {
+    $("err").textContent = err.message;
+    $("go").disabled = false;
+  }
+});
+
+let polling = false;
+function poll(evalId) {
+  if (polling) return; polling = true;
+  const t = setInterval(async () => {
+    const { decision } = await (await fetch("/api/status?id=" + encodeURIComponent(evalId))).json();
+    if (decision !== "PENDING") { clearInterval(t); finish(decision); }
+  }, 3000);
+}
+function finish(decision) { show(decision === "ACCEPT" ? "accept" : "reject"); }
+</script>
+</body>
+</html>
